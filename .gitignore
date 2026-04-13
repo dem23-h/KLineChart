@@ -11,3 +11,7 @@
 .DS_Store
 .cursor
 .pnpm-store
+.gitnexus
+.claude/
+AGENTS.md
+CLAUDE.md
