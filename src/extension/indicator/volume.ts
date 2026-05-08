@@ -20,11 +20,25 @@ import type { IndicatorTemplate, IndicatorFigure } from '../../component/Indicat
 interface Vol {
   open: number
   close: number
+  // `session` is copied from the source KLineData so the bar's styles
+  // callback can recolor extended-hours volume bars in the muted tone
+  // — same rule the candle pane uses (see CandleBarView). Optional
+  // because it's only set by feeds that emit a session field.
+  session?: 'regular' | 'extended'
   volume?: number
   ma1?: number
   ma2?: number
   ma3?: number
 }
+
+/**
+ * Match the candle pane's extended-hours palette so volume bars don't
+ * fight the chart visually. Hardcoded here because Indicator styles
+ * don't see candle styles, and threading them through would touch every
+ * indicator. If themes ever expose a session-color knob this becomes a
+ * lookup; until then a sensible default is fine.
+ */
+const EXTENDED_BAR_COLOR = '#ffffff'
 
 function getVolumeFigure (): IndicatorFigure<Vol> {
   return {
@@ -36,7 +50,9 @@ function getVolumeFigure (): IndicatorFigure<Vol> {
       const current = data.current
       let color = formatValue(indicator.styles, 'bars[0].noChangeColor', (defaultStyles!.bars)[0].noChangeColor)
       if (isValid(current)) {
-        if (current.close > current.open) {
+        if (current.session === 'extended') {
+          color = EXTENDED_BAR_COLOR
+        } else if (current.close > current.open) {
           color = formatValue(indicator.styles, 'bars[0].upColor', (defaultStyles!.bars)[0].upColor)
         } else if (current.close < current.open) {
           color = formatValue(indicator.styles, 'bars[0].downColor', (defaultStyles!.bars)[0].downColor)
@@ -71,7 +87,12 @@ const volume: IndicatorTemplate<Vol, number> = {
     const volSums: number[] = []
     return dataList.map((kLineData, i) => {
       const volume = kLineData.volume ?? 0
-      const vol: Vol = { volume, open: kLineData.open, close: kLineData.close }
+      // Forward the bar's session into the Vol row so the styles
+      // callback above can match the candle pane's session-aware
+      // colouring. Cast through unknown because KLineData's index
+      // signature returns `unknown`.
+      const session = kLineData.session as 'regular' | 'extended' | undefined
+      const vol: Vol = { volume, open: kLineData.open, close: kLineData.close, session }
       params.forEach((p, index) => {
         volSums[index] = (volSums[index] ?? 0) + volume
         if (i >= p - 1) {

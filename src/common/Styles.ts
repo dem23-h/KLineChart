@@ -249,6 +249,15 @@ export interface CandleBarColor extends ChangeColor {
   upWickColor: string
   downWickColor: string
   noChangeWickColor: string
+  /**
+   * Color used when a bar's `session` field equals `'extended'` —
+   * pre-/post-market bars are rendered in this single neutral tone
+   * (body, border, and wick) instead of the up/down/no-change palette,
+   * so traders see at a glance which bars belong to extended hours.
+   */
+  extendedColor: string
+  extendedBorderColor: string
+  extendedWickColor: string
 }
 
 export interface CandleStyle {
@@ -405,7 +414,14 @@ function getDefaultCandleStyle (): CandleStyle {
       noChangeBorderColor: Color.GREY,
       upWickColor: Color.GREEN,
       downWickColor: Color.RED,
-      noChangeWickColor: Color.GREY
+      noChangeWickColor: Color.GREY,
+      // Extended-hours palette. Pure white overrides the up/down/
+      // no-change palette when a bar's `session` field is `'extended'`,
+      // so pre/post bars are visually unambiguous against the dark TV
+      // theme without competing with the green/red direction signal.
+      extendedColor: '#ffffff',
+      extendedBorderColor: '#ffffff',
+      extendedWickColor: '#ffffff'
     },
     area: {
       lineSize: 2,

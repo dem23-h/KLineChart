@@ -61,7 +61,17 @@ export default class CandleBarView extends ChildrenView {
           const { open, high, low, close } = current
           const comparePrice = styles.compareRule === 'current_open' ? open : (prev?.close ?? close)
           const colors: string[] = []
-          if (close > comparePrice) {
+          // Extended-hours bars override the up/down/no-change palette
+          // with a single muted tone — pre-/post-market activity is
+          // typically thin and shouldn't compete visually with regular-
+          // session direction colors. Detection is by the `session` field
+          // KLineData carries when the engine tags it; bars without the
+          // field fall through to the normal direction-based path.
+          if (current.session === 'extended') {
+            colors[0] = styles.extendedColor
+            colors[1] = styles.extendedBorderColor
+            colors[2] = styles.extendedWickColor
+          } else if (close > comparePrice) {
             colors[0] = styles.upColor
             colors[1] = styles.upBorderColor
             colors[2] = styles.upWickColor
