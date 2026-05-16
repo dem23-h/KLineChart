@@ -694,6 +694,18 @@ export default class ChartImp implements Chart {
     this._chartStore.resetData()
   }
 
+  /// Swap the data list in place without going through `_clearData()` +
+  /// async `getBars(init)`. Lets a caller (e.g. a periodic background
+  /// re-fetcher) refresh historical bars without the brief blank that
+  /// `setSymbol` / `resetData` produce between the clear and the async
+  /// data-load callback. Preserves zoom, scroll position, crosshair,
+  /// pagination flags, and drawings — only the bars themselves swap.
+  /// No-op on empty input so a flaky upstream that returns `[]` can't
+  /// wipe the chart.
+  loadDataListFromCache (data: KLineData[]): void {
+    this._chartStore.loadDataListFromCache(data)
+  }
+
   getDataList (): KLineData[] {
     return this._chartStore.getDataList()
   }

@@ -106,6 +106,10 @@ export interface Store {
   setPeriod: (period: Period) => void
   getPeriod: () => Nullable<Period>
   getDataList: () => KLineData[]
+  /// Swap the data list in place. See Chart.loadDataListFromCache for
+  /// the use case (silent background re-fetch without the
+  /// _clearData()+async-getBars blank).
+  loadDataListFromCache: (data: KLineData[]) => void
   setOffsetRightDistance: (distance: number) => void
   getOffsetRightDistance: () => number
   setMaxOffsetLeftDistance: (distance: number) => void
@@ -765,6 +769,37 @@ export default class StoreImp implements Store {
     fn?.()
     this._loading = false
     this._processDataLoad('init')
+  }
+
+  /// Replace `_dataList` in place without `_clearData()` or async
+  /// `_processDataLoad('init')`. Used by a periodic silent refetch
+  /// that wants to land corrected historical bars without the brief
+  /// canvas blank `setSymbol`/`resetData` produce between the clear
+  /// and the async data-load callback. Mirrors `_addData('init')`'s
+  /// post-swap work (visible-range adjust, crosshair preservation,
+  /// indicator recalc, layout) but skips the clear so the prior bars
+  /// stay rendered until the new ones replace them in the same tick.
+  ///
+  /// Pagination flags (`_dataLoadMore.backward/forward`) are preserved
+  /// unchanged so the chart's scroll-back / scroll-forward behaviour
+  /// is unaffected. Empty input is a no-op so a flaky upstream that
+  /// returns `[]` cannot wipe the chart out.
+  loadDataListFromCache (data: KLineData[]): void {
+    if (data.length === 0) return
+    this._dataList = data
+    this._adjustVisibleRange()
+    this.setCrosshair(this._crosshair, { notInvalidate: true })
+    const filterIndicators = this.getIndicatorsByFilter({})
+    if (filterIndicators.length > 0) {
+      this._calcIndicator(filterIndicators)
+    } else {
+      this._chart.layout({
+        measureWidth: true,
+        update: true,
+        buildYAxisTick: true,
+        cacheYAxisWidth: true
+      })
+    }
   }
 
   getBarSpace (): BarSpace {
