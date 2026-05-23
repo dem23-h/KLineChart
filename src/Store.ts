@@ -110,6 +110,13 @@ export interface Store {
   /// the use case (silent background re-fetch without the
   /// _clearData()+async-getBars blank).
   loadDataListFromCache: (data: KLineData[]) => void
+  /// Merge multiple bars into the existing data list by timestamp. See
+  /// Chart.batchUpdateData for the use case (engine pushing several
+  /// bars at once — async DeltaFetch deltas, scroll-back recomputes,
+  /// mid-day corrections). Sibling to loadDataListFromCache: same
+  /// post-update bookkeeping, different mutation shape (per-bar merge
+  /// vs wholesale replace).
+  batchUpdateData: (bars: KLineData[]) => void
   setOffsetRightDistance: (distance: number) => void
   getOffsetRightDistance: () => number
   setMaxOffsetLeftDistance: (distance: number) => void
@@ -787,6 +794,109 @@ export default class StoreImp implements Store {
   loadDataListFromCache (data: KLineData[]): void {
     if (data.length === 0) return
     this._dataList = data
+    this._adjustVisibleRange()
+    this.setCrosshair(this._crosshair, { notInvalidate: true })
+    const filterIndicators = this.getIndicatorsByFilter({})
+    if (filterIndicators.length > 0) {
+      this._calcIndicator(filterIndicators)
+    } else {
+      this._chart.layout({
+        measureWidth: true,
+        update: true,
+        buildYAxisTick: true,
+        cacheYAxisWidth: true
+      })
+    }
+  }
+
+  /// Merge `incoming` bars into `_dataList` by timestamp. Three rules,
+  /// per Sprint 2.5's "async DeltaFetch + scroll-back recompute"
+  /// design (DATA_MIGRATION_PLAN.md §2.16):
+  ///
+  ///   1. `ts > rightmost`        → append (new bar past current end)
+  ///   2. `ts === some existing ts` → replace at that index (correction)
+  ///   3. `ts < oldest` OR mid-history gap → drop silently
+  ///
+  /// Rule 3 covers two unlikely-but-possible cases: a delta that
+  /// includes a bar older than anything the chart has, or an
+  /// in-between ts that doesn't match any existing bar. In practice
+  /// the engine's two batch sources (DeltaFetch fills [last bar, now];
+  /// 60s correction covers existing bars only) don't produce either
+  /// case, but the merge stays safe if they ever do.
+  ///
+  /// Returns `true` iff any bar was appended or replaced — lets the
+  /// caller skip the post-update layout/indicator-recalc work when
+  /// every bar was dropped.
+  ///
+  /// Defensive: input is sorted by timestamp before processing so the
+  /// loop's cached `lastTs` stays correct even if the caller didn't
+  /// sort. O(N log N) once, vs O(N) repeated binary searches under
+  /// arbitrary input order.
+  private _mergeBatchIntoDataList (incoming: KLineData[]): boolean {
+    const sorted = [...incoming].sort((a, b) => a.timestamp - b.timestamp)
+    const dataList = this._dataList
+    const lastTs = dataList.length > 0
+      ? (formatValue(dataList[dataList.length - 1], 'timestamp', 0) as number)
+      : Number.NEGATIVE_INFINITY
+    let changed = false
+    for (const bar of sorted) {
+      const ts = bar.timestamp
+      if (ts > lastTs) {
+        // Past rightmost → append. Subsequent batch entries are
+        // sorted ≥ ts so they also append correctly without
+        // updating lastTs in the loop.
+        dataList.push(bar)
+        changed = true
+        continue
+      }
+      if (ts === lastTs) {
+        // Tie with the cached rightmost → in-place replace at the
+        // last index. (lastTs is a snapshot taken before the loop;
+        // any earlier-iter append already advanced the real
+        // rightmost, but we still want the original rightmost ts
+        // to be addressable for correction by a tied entry.)
+        dataList[dataList.length - 1] = bar
+        changed = true
+        continue
+      }
+      const idx = this._findIndexByTimestamp(ts)
+      if (idx >= 0) {
+        dataList[idx] = bar
+        changed = true
+      }
+      // else: ts not found anywhere (older than oldest, or
+      // mid-history gap) → drop silently per design.
+    }
+    return changed
+  }
+
+  /// Binary search `_dataList` for the bar with exact `ts`. Returns
+  /// the index on hit, -1 on miss. Relies on `_dataList` being sorted
+  /// by timestamp ascending, which is the chart's standing invariant.
+  private _findIndexByTimestamp (ts: number): number {
+    let lo = 0
+    let hi = this._dataList.length - 1
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1
+      const midTs = formatValue(this._dataList[mid], 'timestamp', 0) as number
+      if (midTs === ts) return mid
+      if (midTs < ts) lo = mid + 1
+      else hi = mid - 1
+    }
+    return -1
+  }
+
+  batchUpdateData (bars: KLineData[]): void {
+    if (bars.length === 0) return
+    const changed = this._mergeBatchIntoDataList(bars)
+    if (!changed) return
+    // Mirror loadDataListFromCache's post-mutation work: adjust
+    // visible range (in case bars were appended past the prior
+    // rightmost), preserve crosshair, recalc indicators, layout.
+    // Leave _lastBarRightSideDiffBarCount alone — _adjustVisibleRange
+    // clamps it to the new totalBarCount and the chart's right-pinned
+    // visible range follows newly-appended bars naturally (same as
+    // loadDataListFromCache).
     this._adjustVisibleRange()
     this.setCrosshair(this._crosshair, { notInvalidate: true })
     const filterIndicators = this.getIndicatorsByFilter({})

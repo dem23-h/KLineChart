@@ -706,6 +706,27 @@ export default class ChartImp implements Chart {
     this._chartStore.loadDataListFromCache(data)
   }
 
+  /// Merge a batch of bars into the existing data list by timestamp.
+  /// Sibling to `loadDataListFromCache` for the case where the engine
+  /// has SOME new/corrected bars to push but the chart's current data
+  /// list should otherwise stay intact. Per-bar rules:
+  ///
+  ///   - `ts > rightmost`        → append (new bar past current end)
+  ///   - `ts === existing ts`    → replace at that index (correction)
+  ///   - `ts < oldest` OR mid-gap → drop silently
+  ///
+  /// Use case (Sprint 2.5+): the engine's async DeltaFetch + scroll-back
+  /// recompute + 60s correction paths push multiple bars in one WS
+  /// frame (`bar_batch`); single-bar live updates (Kline close, tick
+  /// motion) keep using the existing `bar` frame → DataLoader's
+  /// `subscribeBar` callback path. No-op on empty input.
+  ///
+  /// Preserves zoom, scroll position, crosshair, pagination flags, and
+  /// drawings — only the affected bars change.
+  batchUpdateData (bars: KLineData[]): void {
+    this._chartStore.batchUpdateData(bars)
+  }
+
   getDataList (): KLineData[] {
     return this._chartStore.getDataList()
   }
