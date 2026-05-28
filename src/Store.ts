@@ -608,6 +608,41 @@ export default class StoreImp implements Store {
         this._dataList[dataCount - 1] = data
         success = true
         adjustFlag = true
+      } else {
+        // Out-of-order bar: timestamp < lastDataTimestamp. This can
+        // happen when the live tick stream and the per-minute summary
+        // frame arrive in swapped order at bucket-close boundaries —
+        // first tick of the new minute reaches the chart before the
+        // final summary for the just-closed minute, so the summary
+        // ends up "older than the rightmost."
+        //
+        // Walk back from the rightmost-but-one to find either an
+        // existing slot at this timestamp (replace it) or the
+        // insertion point (splice in). Modern bars sit near the tail
+        // so this is O(small) in practice. Without this branch the
+        // bar was silently dropped — symptom: a single bar at a
+        // minute boundary missing from the chart, until the next
+        // wholesale-replace path (e.g. silent refetch) restored it.
+        for (let i = dataCount - 2; i >= 0; i--) {
+          const ts = formatValue(this._dataList[i], 'timestamp', 0) as number
+          if (ts === timestamp) {
+            this._dataList[i] = data
+            success = true
+            adjustFlag = true
+            break
+          }
+          if (ts < timestamp) {
+            this._dataList.splice(i + 1, 0, data)
+            dataLengthChange = 1
+            success = true
+            adjustFlag = true
+            break
+          }
+        }
+        // If the loop completes without a break, the bar is older
+        // than every bar in the chart's data list — drop silently
+        // (matches original behaviour for genuinely-old bars before
+        // the chart's left edge).
       }
     }
     if (success && adjustFlag) {
