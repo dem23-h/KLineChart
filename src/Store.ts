@@ -34,7 +34,7 @@ import { isArray, isString, isValid, isNumber, isBoolean, merge } from './common
 import { createId } from './common/utils/id'
 import { binarySearchNearest } from './common/utils/number'
 import { logWarn } from './common/utils/logger'
-import { UpdateLevel } from './common/Updater'
+import { UpdateLevel, LAST_BAR_FAST_PATH_ENABLED } from './common/Updater'
 import type { DataLoader, DataLoaderGetBarsParams, DataLoadMore, DataLoadType } from './common/DataLoader'
 
 import type { Options, Formatter, ThousandsSeparator, DecimalFold, FormatDateType, FormatDateParams, FormatBigNumber, FormatExtendText, FormatExtendTextParams, ZoomAnchor, ZoomAnchorType } from './Options'
@@ -552,6 +552,12 @@ export default class StoreImp implements Store {
     let success = false
     let adjustFlag = false
     let dataLengthChange = 0
+    // Set only by the replace-rightmost single-bar branch — the LAST_BAR
+    // fast-path candidate (TV_DESIGN_PLAN Phase 2). Holds the bar object
+    // being replaced so the fast path can patch cache references and
+    // compute the old last-price-line strip.
+    let replacedPrevBar: Nullable<KLineData> = null
+    let replacedNewBar: Nullable<KLineData> = null
     if (isArray<KLineData>(data)) {
       const realMore = { backward: false, forward: false }
       if (isBoolean(more)) {
@@ -605,6 +611,8 @@ export default class StoreImp implements Store {
         success = true
         adjustFlag = true
       } else if (timestamp === lastDataTimestamp) {
+        replacedPrevBar = this._dataList[dataCount - 1]
+        replacedNewBar = data
         this._dataList[dataCount - 1] = data
         success = true
         adjustFlag = true
@@ -646,6 +654,16 @@ export default class StoreImp implements Store {
       }
     }
     if (success && adjustFlag) {
+      // LAST_BAR fast path (TV_DESIGN_PLAN Phase 2): a live update that
+      // replaced only the rightmost bar can usually skip the full
+      // visible-range rebuild + full indicator recalc + full repaint of
+      // every pane. Any reason it can't — an indicator without a tail
+      // calc, a range/extreme/label change, the kill switch — falls
+      // through to the existing path below, byte-identical.
+      if (isValid(replacedPrevBar) && isValid(replacedNewBar) &&
+        this._tryFastLastBarUpdate(replacedPrevBar, replacedNewBar)) {
+        return
+      }
       this._adjustVisibleRange()
       this.setCrosshair(this._crosshair, { notInvalidate: true })
       const filterIndicators = this.getIndicatorsByFilter({})
@@ -660,6 +678,56 @@ export default class StoreImp implements Store {
         })
       }
     }
+  }
+
+  /**
+   * LAST_BAR fast path: tail-recalc indicators in place, patch the
+   * visible-data cache's references to the replaced rightmost bar, and
+   * ask the chart for a clipped repaint. Returns false when anything
+   * can't take the fast path — the caller MUST then run the full update
+   * path (which rebuilds every structure this method touched, so a
+   * failed attempt leaves no inconsistent state behind).
+   */
+  private _tryFastLastBarUpdate (prevBar: KLineData, newBar: KLineData): boolean {
+    if (!LAST_BAR_FAST_PATH_ENABLED) {
+      return false
+    }
+    const lastIndex = this._dataList.length - 1
+    const visibleList = this._visibleRangeDataList
+    if (visibleList.length === 0) {
+      return false
+    }
+    // Views iterate this cache (built by _adjustVisibleRange), not
+    // _dataList — re-reference the replaced bar in place. Entries past
+    // the last bar (empty right-edge slots) reference it via prev too.
+    for (let i = visibleList.length - 1; i >= 0; i--) {
+      const entry = visibleList[i]
+      if (entry.dataIndex < lastIndex - 1) {
+        break
+      }
+      const neighbor = entry.data
+      if (neighbor.current === prevBar) {
+        neighbor.current = newBar
+      }
+      if (neighbor.prev === prevBar) {
+        neighbor.prev = newBar
+      }
+      if (neighbor.next === prevBar) {
+        neighbor.next = newBar
+      }
+    }
+    // Keep the crosshair's bar reference fresh (state only — the clipped
+    // repaint below is the paint).
+    this.setCrosshair(this._crosshair, { notInvalidate: true })
+    // Tail-recalc every indicator; one that can't (no calcTail, result
+    // not parallel, callback declined) forces the full path.
+    const indicators = this.getIndicatorsByFilter({})
+    for (const indicator of indicators) {
+      if (!indicator.calcTailImp(this._dataList)) {
+        return false
+      }
+    }
+    return this._chart.tryLayoutLastBar(prevBar, newBar)
   }
 
   setDataLoader (dataLoader: DataLoader): void {

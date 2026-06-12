@@ -102,6 +102,27 @@ const volume: IndicatorTemplate<Vol, number> = {
       })
       return vol
     })
+  },
+  // LAST_BAR fast path: only the rightmost bar changed, so the tail row
+  // is the bar's own volume/open/close/session plus each MA recomputed
+  // as a windowed sum over the last `p` bars — O(Σp), no full-list walk.
+  calcTail: (dataList, indicator) => {
+    const { calcParams: params, figures } = indicator
+    const i = dataList.length - 1
+    const kLineData = dataList[i]
+    const volume = kLineData.volume ?? 0
+    const session = kLineData.session as 'regular' | 'extended' | undefined
+    const vol: Vol = { volume, open: kLineData.open, close: kLineData.close, session }
+    params.forEach((p, index) => {
+      if (i >= p - 1) {
+        let sum = 0
+        for (let j = i - (p - 1); j <= i; j++) {
+          sum += dataList[j].volume ?? 0
+        }
+        vol[figures[index].key] = sum / p
+      }
+    })
+    return vol
   }
 }
 

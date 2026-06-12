@@ -101,6 +101,15 @@ export type IndicatorDrawCallback<D, C, E> = (params: IndicatorDrawParams<D, C, 
 
 export type IndicatorCalcCallback<D, C, E> = (dataList: KLineData[], indicator: Indicator<D, C, E>) => Promise<D[]> | D[]
 
+/**
+ * Tail-only calculation for the LAST_BAR fast path: a live update replaced
+ * only the rightmost bar, so only the LAST result row can change. Return
+ * the new last row, or null to decline (caller falls back to a full
+ * `calc`). Must be synchronous and side-effect-free — the fast path runs
+ * inside the apply hot loop.
+ */
+export type IndicatorCalcTailCallback<D, C, E> = (dataList: KLineData[], indicator: Indicator<D, C, E>) => Nullable<D>
+
 export type IndicatorShouldUpdateCallback<D, C, E> = (prev: Indicator<D, C, E>, current: Indicator<D, C, E>) => (boolean | { calc: boolean, draw: boolean })
 
 export type IndicatorDataState = 'loading' | 'error' | 'ready'
@@ -202,6 +211,14 @@ export interface Indicator<D = unknown, C = unknown, E = unknown> {
    * Indicator calculation
    */
   calc: IndicatorCalcCallback<D, C, E>
+
+  /**
+   * Optional tail-only calculation (LAST_BAR fast path) — see
+   * `IndicatorCalcTailCallback`. Indicators without it force a full
+   * `calc` on every live update, which disables the fast path for the
+   * whole chart while they are active.
+   */
+  calcTail: Nullable<IndicatorCalcTailCallback<D, C, E>>
 
   /**
    * Regenerate figure configuration
@@ -342,6 +359,7 @@ export default class IndicatorImp<D = unknown, C = unknown, E = unknown> impleme
   }
 
   calc: IndicatorCalcCallback<D, C, E> = () => []
+  calcTail: Nullable<IndicatorCalcTailCallback<D, C, E>> = null
   regenerateFigures: Nullable<IndicatorRegenerateFiguresCallback<D, C>> = null
   createTooltipDataSource: Nullable<IndicatorCreateTooltipDataSourceCallback<D>> = null
   draw: Nullable<IndicatorDrawCallback<D, C, E>> = null
@@ -415,6 +433,30 @@ export default class IndicatorImp<D = unknown, C = unknown, E = unknown> impleme
     try {
       const result = await this.calc(dataList, this)
       this.result = result
+      return true
+    } catch (e) {
+      return false
+    }
+  }
+
+  /**
+   * Tail-only recalc for the LAST_BAR fast path. Returns false when this
+   * indicator can't do a tail update — no `calcTail`, `result` not
+   * parallel to `dataList` (the invariant a replace-rightmost preserves),
+   * or the callback declined/threw — in which case the caller must fall
+   * back to the full path (`calcImp` + full layout).
+   */
+  calcTailImp (dataList: KLineData[]): boolean {
+    const calcTail = this.calcTail
+    if (!isValid(calcTail) || dataList.length === 0 || this.result.length !== dataList.length) {
+      return false
+    }
+    try {
+      const row = calcTail(dataList, this)
+      if (!isValid(row)) {
+        return false
+      }
+      this.result[this.result.length - 1] = row
       return true
     } catch (e) {
       return false

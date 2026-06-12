@@ -20,7 +20,7 @@ import { createDefaultBounding } from './common/Bounding'
 import type { KLineData } from './common/Data'
 import type Coordinate from './common/Coordinate'
 import type Point from './common/Point'
-import { UpdateLevel } from './common/Updater'
+import { UpdateLevel, LAST_BAR_FAST_PATH_ENABLED, type InvalidRect } from './common/Updater'
 import type Crosshair from './common/Crosshair'
 import type { ActionType, ActionCallback } from './common/Action'
 import type { DataLoader } from './common/DataLoader'
@@ -70,6 +70,17 @@ export interface DomFilter {
   paneId: string
   position?: DomPosition
 }
+
+/**
+ * LAST_BAR fast path: height (CSS px) of the top-of-pane strip kept in the
+ * overlay invalidation region so the tooltip legend repaints every apply.
+ * Generously sized — candle pane stacks the title row + OHLCV legend +
+ * one row per overlay indicator (our typical set: 4 EMAs + VWAP ≈ 7 rows);
+ * sub-panes show 1–2 rows. Over-covering costs a sliver of raster; under-
+ * covering would leave stale legend text.
+ */
+const LAST_BAR_LEGEND_STRIP_CANDLE = 160
+const LAST_BAR_LEGEND_STRIP_INDICATOR = 72
 
 export interface Chart extends Store {
   id: string
@@ -503,6 +514,151 @@ export default class ChartImp implements Chart {
         this._separatorPanes.get(pane)?.update(level)
       })
     }
+  }
+
+  /**
+   * LAST_BAR fast path (TV_DESIGN_PLAN Phase 2): a live update replaced
+   * only the rightmost bar, indicator tails are already recalced, and the
+   * caller asks whether the repaint can be bounded to the regions such an
+   * update can actually change — the tail bar column, the tooltip-legend
+   * strip, and the last-price-line strips — instead of a full redraw of
+   * every pane's canvases.
+   *
+   * Returns false (caller MUST then take the existing full path) when any
+   * geometry-affecting condition holds: kill switch off; area candles
+   * (animated price point); a non-normal pane state; the new bar pushing
+   * past the cached visible extremes (auto-scale range and the high/low
+   * price-mark anchors could move anywhere); a digit-count change in the
+   * formatted last price (axis label width re-measure); or any tail value
+   * landing outside its pane vertically (axis range would need to grow).
+   *
+   * X-axis pane and separators are skipped outright — nothing on a time
+   * axis can change when the bucket timestamp is unchanged. Y-axis
+   * widgets always fully redraw (narrow strips; keeps the last-price
+   * label fresh by construction).
+   */
+  tryLayoutLastBar (prevBar: KLineData, currentBar: KLineData): boolean {
+    if (!LAST_BAR_FAST_PATH_ENABLED) {
+      return false
+    }
+    const store = this._chartStore
+    const styles = store.getStyles()
+    const candleStyles = styles.candle
+    if (candleStyles.type === 'area') {
+      return false
+    }
+    const dataList = store.getDataList()
+    const lastIndex = dataList.length - 1
+    if (lastIndex < 0) {
+      return false
+    }
+    const visibleRange = store.getVisibleRange()
+    const lastBarVisible = lastIndex >= visibleRange.realFrom && lastIndex < visibleRange.realTo
+
+    if (lastBarVisible) {
+      const highLow = store.getVisibleRangeHighLowPrice()
+      if (currentBar.high > highLow[0].price || currentBar.low < highLow[1].price) {
+        return false
+      }
+    }
+
+    const pricePrecision = store.getSymbol()?.pricePrecision ?? 2
+    if (prevBar.close.toFixed(pricePrecision).length !== currentBar.close.toFixed(pricePrecision).length) {
+      return false
+    }
+
+    const barSpace = store.getBarSpace()
+    // Tail column: from one bar left of the last bar (polyline tail
+    // segments start at the prior point) to the pane's right edge;
+    // 4px slack absorbs anti-aliased edge bleed.
+    let columnLeft = 0
+    if (lastBarVisible) {
+      const xPrev = store.dataIndexToCoordinate(Math.max(0, lastIndex - 1))
+      columnLeft = Math.floor(xPrev - barSpace.bar) - 4
+    }
+
+    const showLastPriceLine = candleStyles.priceMark.show && candleStyles.priceMark.last.show && candleStyles.priceMark.last.line.show
+    const pending: Array<{ pane: DrawPane, main: InvalidRect[], overlay: InvalidRect[] }> = []
+    for (const pane of this._drawPanes) {
+      const paneId = pane.getId()
+      if (paneId === PaneIdConstants.X_AXIS) {
+        continue
+      }
+      if (pane.getOptions().state !== 'normal') {
+        return false
+      }
+      const bounding = pane.getMainWidget().getBounding()
+      const yAxis = pane.getAxisComponent()
+      const isCandlePane = paneId === PaneIdConstants.CANDLE
+
+      if (lastBarVisible) {
+        // Pixel-space fit check: every value this update can change must
+        // land inside the pane, else the axis range needs recomputing.
+        // Pixel space sidesteps range-field semantics and handles
+        // inverted/log axes for free.
+        const tailValues: number[] = []
+        if (isCandlePane) {
+          tailValues.push(currentBar.open, currentBar.high, currentBar.low, currentBar.close)
+        }
+        const indicators = store.getIndicatorsByFilter({ paneId })
+        for (const indicator of indicators) {
+          if (!indicator.visible) {
+            continue
+          }
+          const row = indicator.result[indicator.result.length - 1] as Nullable<Record<string, unknown>>
+          if (!isValid(row)) {
+            continue
+          }
+          for (const figure of indicator.figures) {
+            const value = row[figure.key]
+            if (isNumber(value)) {
+              tailValues.push(value)
+            }
+          }
+        }
+        for (const value of tailValues) {
+          const y = yAxis.convertToPixel(value)
+          if (y < 0 || y > bounding.height) {
+            return false
+          }
+        }
+      }
+
+      const main: InvalidRect[] = []
+      const overlay: InvalidRect[] = []
+      if (lastBarVisible) {
+        const column: InvalidRect = {
+          x: columnLeft,
+          y: 0,
+          width: Math.max(0, bounding.width - columnLeft),
+          height: bounding.height
+        }
+        main.push(column)
+        overlay.push(column)
+      }
+      // The tooltip legend (overlay canvas, top-left) shows the latest
+      // bar + indicator values — its strip repaints on every apply.
+      overlay.push({
+        x: 0,
+        y: 0,
+        width: bounding.width,
+        height: Math.min(bounding.height, isCandlePane ? LAST_BAR_LEGEND_STRIP_CANDLE : LAST_BAR_LEGEND_STRIP_INDICATOR)
+      })
+      if (isCandlePane && showLastPriceLine) {
+        // The last-price line spans the full pane width and moves with
+        // every close change — invalidate thin strips at the old and new
+        // line positions (drawn even when the last bar is scrolled off).
+        const yPrev = yAxis.convertToPixel(prevBar.close)
+        const yNew = yAxis.convertToPixel(currentBar.close)
+        main.push({ x: 0, y: yPrev - 6, width: bounding.width, height: 12 })
+        main.push({ x: 0, y: yNew - 6, width: bounding.width, height: 12 })
+      }
+      pending.push({ pane, main, overlay })
+    }
+    pending.forEach(({ pane, main, overlay }) => {
+      pane.updateLastBar(main, overlay)
+    })
+    return true
   }
 
   getDom (paneId?: string, position?: DomPosition): Nullable<HTMLElement> {

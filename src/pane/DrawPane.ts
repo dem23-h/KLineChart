@@ -14,7 +14,7 @@
 
 import type DeepRequired from '../common/DeepRequired'
 import type Nullable from '../common/Nullable'
-import type { UpdateLevel } from '../common/Updater'
+import { UpdateLevel, type InvalidRect } from '../common/Updater'
 import type Bounding from '../common/Bounding'
 
 import { isValid, merge } from '../common/utils/typeChecks'
@@ -153,6 +153,16 @@ export default abstract class DrawPane<C extends Axis = Axis> extends Pane {
   override updateImp (level: UpdateLevel): void {
     this._mainWidget.update(level)
     this._yAxisWidget?.update(level)
+  }
+
+  /**
+   * LAST_BAR fast path: clip-redraw the main widget's canvases to the
+   * given regions; the y-axis widget (narrow strip — ticks + last-price
+   * label) always fully redraws so axis content can never go stale.
+   */
+  updateLastBar (mainRegion: InvalidRect[], overlayRegion: InvalidRect[]): void {
+    this._mainWidget.updatePartial(mainRegion, overlayRegion)
+    this._yAxisWidget?.update(UpdateLevel.All)
   }
 
   destroy (): void {

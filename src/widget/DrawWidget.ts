@@ -13,7 +13,7 @@
  */
 
 import type Bounding from '../common/Bounding'
-import { UpdateLevel } from '../common/Updater'
+import { UpdateLevel, type InvalidRect } from '../common/Updater'
 import Canvas from '../common/Canvas'
 
 import type DrawPane from '../pane/DrawPane'
@@ -95,6 +95,19 @@ export default abstract class DrawWidget<P extends DrawPane = DrawPane> extends 
         break
       }
     }
+  }
+
+  /**
+   * LAST_BAR fast path: redraw both canvases clipped to the given
+   * invalidation regions. If the widget's size changed since the last
+   * full draw, `Canvas.update`'s size-mismatch branch automatically
+   * falls back to a full redraw, so this is safe to call without a
+   * geometry guard.
+   */
+  updatePartial (mainRegion: InvalidRect[], overlayRegion: InvalidRect[]): void {
+    const { width, height } = this.getBounding()
+    this._mainCanvas.update(width, height, mainRegion)
+    this._overlayCanvas.update(width, height, overlayRegion)
   }
 
   destroy (): void {

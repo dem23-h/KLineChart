@@ -16,6 +16,8 @@ import { getPixelRatio } from './utils/canvas'
 import { createDom } from './utils/dom'
 import { isValid } from './utils/typeChecks'
 import { requestAnimationFrame, DEFAULT_REQUEST_ID } from './utils/compatible'
+import type Nullable from './Nullable'
+import type { InvalidRect } from './Updater'
 
 type DrawListener = () => void
 
@@ -50,6 +52,16 @@ export default class Canvas {
   private _nextPixelHeight = 0
 
   private _requestAnimationId = DEFAULT_REQUEST_ID
+
+  /**
+   * Invalidation region for the currently queued draw. Only meaningful
+   * while a rAF is pending: `null` = full clear + redraw (today's
+   * behaviour), an array = clear + redraw clipped to the union of these
+   * rects (LAST_BAR fast path). Multiple update requests landing within
+   * one frame merge their regions; any regionless request upgrades the
+   * pending draw to full.
+   */
+  private _pendingRegion: Nullable<InvalidRect[]> = null
 
   private readonly _mediaQueryListener: () => void = () => {
     const pixelRatio = getPixelRatio(this._element)
@@ -103,16 +115,62 @@ export default class Canvas {
 
   private _executeListener (fn?: () => void): void {
     if (this._requestAnimationId === DEFAULT_REQUEST_ID) {
+      this._pendingRegion = null
       this._requestAnimationId = requestAnimationFrame(() => {
+        this._pendingRegion = null
         this._ctx.clearRect(0, 0, this._width, this._height)
         fn?.()
         this._listener()
         this._requestAnimationId = DEFAULT_REQUEST_ID
       })
+    } else {
+      // A draw is already queued — upgrade it to full so the size/scale
+      // change is never painted through a stale partial clip.
+      this._pendingRegion = null
     }
   }
 
-  update (w: number, h: number): void {
+  /**
+   * Queue a redraw bounded to `region` (LAST_BAR fast path), or a full
+   * redraw when `region` is null. Draw calls outside the clip are issued
+   * but never rasterized, so view code stays untouched while raster work
+   * shrinks to the invalidated rects. Region state merges across calls
+   * within one frame; the shared rAF guard means at most one draw per
+   * frame per canvas, exactly as before.
+   */
+  private _invalidate (region: Nullable<InvalidRect[]>): void {
+    if (this._requestAnimationId !== DEFAULT_REQUEST_ID) {
+      if (region === null || this._pendingRegion === null) {
+        this._pendingRegion = null
+      } else {
+        this._pendingRegion = this._pendingRegion.concat(region)
+      }
+      return
+    }
+    this._pendingRegion = region
+    this._requestAnimationId = requestAnimationFrame(() => {
+      const pending = this._pendingRegion
+      this._pendingRegion = null
+      const ctx = this._ctx
+      if (isValid(pending) && pending.length > 0) {
+        ctx.save()
+        ctx.beginPath()
+        pending.forEach(r => {
+          ctx.rect(r.x, r.y, r.width, r.height)
+          ctx.clearRect(r.x, r.y, r.width, r.height)
+        })
+        ctx.clip()
+        this._listener()
+        ctx.restore()
+      } else {
+        ctx.clearRect(0, 0, this._width, this._height)
+        this._listener()
+      }
+      this._requestAnimationId = DEFAULT_REQUEST_ID
+    })
+  }
+
+  update (w: number, h: number, region?: Nullable<InvalidRect[]>): void {
     if (this._width !== w || this._height !== h) {
       this._element.style.width = `${w}px`
       this._element.style.height = `${h}px`
@@ -123,7 +181,7 @@ export default class Canvas {
         this._resetPixelRatio()
       }
     } else {
-      this._executeListener()
+      this._invalidate(region ?? null)
     }
   }
 
