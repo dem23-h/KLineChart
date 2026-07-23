@@ -869,7 +869,8 @@ export default class ChartImp implements Chart {
   ///
   ///   - `ts > rightmost`        → append (new bar past current end)
   ///   - `ts === existing ts`    → replace at that index (correction)
-  ///   - `ts < oldest` OR mid-gap → drop silently
+  ///   - `oldest < ts < rightmost` with no match → splice into the gap
+  ///   - `ts <= oldest` with no match → drop silently
   ///
   /// Use case (Sprint 2.5+): the engine's async DeltaFetch + scroll-back
   /// recompute + 60s correction paths push multiple bars in one WS

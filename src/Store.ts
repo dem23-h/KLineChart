@@ -29,6 +29,7 @@ import { SymbolDefaultPrecisionConstants, type SymbolInfo } from './common/Symbo
 import Action from './common/Action'
 import type { ActionType, ActionCallback } from './common/Action'
 import { formatValue, formatTimestampByTemplate, formatBigNumber, formatThousands, formatFoldDecimal } from './common/utils/format'
+import { mergeBatchIntoDataList } from './common/utils/barMerge'
 import { getDefaultStyles, type Styles, type TooltipLegend } from './common/Styles'
 import { isArray, isString, isValid, isNumber, isBoolean, merge } from './common/utils/typeChecks'
 import { createId } from './common/utils/id'
@@ -912,86 +913,9 @@ export default class StoreImp implements Store {
     }
   }
 
-  /// Merge `incoming` bars into `_dataList` by timestamp. Three rules,
-  /// per Sprint 2.5's "async DeltaFetch + scroll-back recompute"
-  /// design (DATA_MIGRATION_PLAN.md §2.16):
-  ///
-  ///   1. `ts > rightmost`        → append (new bar past current end)
-  ///   2. `ts === some existing ts` → replace at that index (correction)
-  ///   3. `ts < oldest` OR mid-history gap → drop silently
-  ///
-  /// Rule 3 covers two unlikely-but-possible cases: a delta that
-  /// includes a bar older than anything the chart has, or an
-  /// in-between ts that doesn't match any existing bar. In practice
-  /// the engine's two batch sources (DeltaFetch fills [last bar, now];
-  /// 60s correction covers existing bars only) don't produce either
-  /// case, but the merge stays safe if they ever do.
-  ///
-  /// Returns `true` iff any bar was appended or replaced — lets the
-  /// caller skip the post-update layout/indicator-recalc work when
-  /// every bar was dropped.
-  ///
-  /// Defensive: input is sorted by timestamp before processing so the
-  /// loop's cached `lastTs` stays correct even if the caller didn't
-  /// sort. O(N log N) once, vs O(N) repeated binary searches under
-  /// arbitrary input order.
-  private _mergeBatchIntoDataList (incoming: KLineData[]): boolean {
-    const sorted = [...incoming].sort((a, b) => a.timestamp - b.timestamp)
-    const dataList = this._dataList
-    const lastTs = dataList.length > 0
-      ? (formatValue(dataList[dataList.length - 1], 'timestamp', 0) as number)
-      : Number.NEGATIVE_INFINITY
-    let changed = false
-    for (const bar of sorted) {
-      const ts = bar.timestamp
-      if (ts > lastTs) {
-        // Past rightmost → append. Subsequent batch entries are
-        // sorted ≥ ts so they also append correctly without
-        // updating lastTs in the loop.
-        dataList.push(bar)
-        changed = true
-        continue
-      }
-      if (ts === lastTs) {
-        // Tie with the cached rightmost → in-place replace at the
-        // last index. (lastTs is a snapshot taken before the loop;
-        // any earlier-iter append already advanced the real
-        // rightmost, but we still want the original rightmost ts
-        // to be addressable for correction by a tied entry.)
-        dataList[dataList.length - 1] = bar
-        changed = true
-        continue
-      }
-      const idx = this._findIndexByTimestamp(ts)
-      if (idx >= 0) {
-        dataList[idx] = bar
-        changed = true
-      }
-      // else: ts not found anywhere (older than oldest, or
-      // mid-history gap) → drop silently per design.
-    }
-    return changed
-  }
-
-  /// Binary search `_dataList` for the bar with exact `ts`. Returns
-  /// the index on hit, -1 on miss. Relies on `_dataList` being sorted
-  /// by timestamp ascending, which is the chart's standing invariant.
-  private _findIndexByTimestamp (ts: number): number {
-    let lo = 0
-    let hi = this._dataList.length - 1
-    while (lo <= hi) {
-      const mid = (lo + hi) >>> 1
-      const midTs = formatValue(this._dataList[mid], 'timestamp', 0) as number
-      if (midTs === ts) return mid
-      if (midTs < ts) lo = mid + 1
-      else hi = mid - 1
-    }
-    return -1
-  }
-
   batchUpdateData (bars: KLineData[]): void {
     if (bars.length === 0) return
-    const changed = this._mergeBatchIntoDataList(bars)
+    const changed = mergeBatchIntoDataList(this._dataList, bars)
     if (!changed) return
     // Mirror loadDataListFromCache's post-mutation work: adjust
     // visible range (in case bars were appended past the prior
