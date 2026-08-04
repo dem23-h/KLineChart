@@ -29,11 +29,17 @@ export const PeriodTypeXAxisFormat: Record<PeriodType, string> = {
   year: 'YYYY'
 }
 
+// `ddd` (weekday) is deliberately absent from week/month/year:
+// - week: the timestamp is a bucket boundary, not a trading day, so the weekday
+//   is a constant artifact of the anchor and says nothing about the bar. The
+//   anchor is not even stable across feeds: the engine's aggregation path uses
+//   Monday 00:00 ET, while the mock provider emits Wednesday 20:00 ET.
+// - month/year: no day-of-month is displayed, so a weekday would be meaningless.
 export const PeriodTypeCrosshairTooltipFormat: Record<PeriodType, string> = {
-  second: 'HH:mm:ss',
-  minute: 'YYYY-MM-DD HH:mm',
-  hour: 'YYYY-MM-DD HH:mm',
-  day: 'YYYY-MM-DD',
+  second: 'ddd HH:mm:ss',
+  minute: 'ddd YYYY-MM-DD HH:mm',
+  hour: 'ddd YYYY-MM-DD HH:mm',
+  day: 'ddd YYYY-MM-DD',
   week: 'YYYY-MM-DD',
   month: 'YYYY-MM',
   year: 'YYYY'

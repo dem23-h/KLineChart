@@ -467,6 +467,9 @@ export default class StoreImp implements Store {
     ) {
       const options: Intl.DateTimeFormatOptions = {
         hour12: false,
+        // Feeds the `ddd` token in formatTimestampToDateTime. Requested here so the
+        // weekday and Y-M-D come from one formatToParts call and can never disagree.
+        weekday: 'short',
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
