@@ -1,4 +1,4 @@
-# KLineChart — Chart API Reference (v10.0.0-beta1)
+# KLineChart — Chart API Reference (v10.1.0)
 
 ---
 
@@ -10,34 +10,18 @@ Initializes a chart. Wait until the container DOM is ready before calling.
 (
   ds: string | HTMLElement,
   options?: {
-    layout?: Array<{
-      type: 'candle' | 'indicator' | 'xAxis'
-      content?: Array<Indicator | string>
-      options?: {
-        id?: string
-        height?: number
-        minHeight?: number
-        dragEnabled?: boolean
-        order?: number
-        state?: 'normal' | 'maximize' | 'minimize'
-        axis?: {
-          name?: string
-          reverse?: boolean
-          inside?: boolean
-          position?: 'left' | 'right'
-          scrollZoomEnabled?: boolean
-          gap?: { top?: number; bottom?: number }
-          createRange?: (params: object) => { from: number; to: number; range: number; realFrom: number; realTo: number; realRange: number; displayFrom: number; displayTo: number; displayRange: number }
-          createTicks?: (params: object) => Array<{ coord: number; value: number | string; text: string }>
-        }
-      }
-    }>
+    layout?: {
+      barSpaceLimit?: { min?: number; max?: number }
+      pane?: { height?: number; minHeight?: number; dragEnabled?: boolean; order?: number; state?: 'normal' | 'maximize' | 'minimize' }
+      yAxis?: { reverse?: boolean; inside?: boolean; needWidget?: boolean; position?: 'left' | 'right'; scrollZoomEnabled?: boolean; gap?: { top?: number; bottom?: number } }
+    }
     locale?: string
     styles?: string | Styles
     timezone?: string
     formatter?: {
       formatDate?: (params: { dateTimeFormat: Intl.DateTimeFormat; timestamp: number; template: string; type: 'tooltip' | 'crosshair' | 'xAxis' }) => string
       formatBigNumber?: (value: string | number) => string
+      formatExtendText?: (params: { type: 'last_price'; data: KLineData; index: number }) => string
     }
     thousandsSeparator?: {
       sign?: string
@@ -48,6 +32,7 @@ Initializes a chart. Wait until the container DOM is ready before calling.
       format?: (value: number | string) => string
     }
     zoomAnchor?: 'cursor' | 'last_bar' | { main?: 'cursor' | 'last_bar'; xAxis?: 'cursor' | 'last_bar' }
+    hotkey?: { enabled?: boolean; exclude?: string[] }
   }
 ) => Chart
 ```
@@ -56,14 +41,15 @@ Initializes a chart. Wait until the container DOM is ready before calling.
 
 - `ds` — Container DOM element or element id.
 - `options` — Optional config:
-  - `layout` — Custom pane layout array. Each item has `type` (`candle` / `indicator` / `xAxis`), optional `content` (indicators), and `options` (id, height, minHeight, dragEnabled, order, state, axis config).
+  - `layout` — Defaults for every pane (`pane`), every y-axis (`yAxis`) and the bar-space limit. Since 10.0 there is no per-pane layout array and no per-pane `axis`: create panes with `chart.createIndicator({ name, paneId })`, size them with `chart.setPaneOptions`, and set an axis with `chart.overrideYAxis({ paneId, name })`.
   - `locale` — Built-in: `zh-CN`, `en-US`.
   - `timezone` — e.g. `Asia/Shanghai`. Defaults to local timezone.
   - `styles` — A registered style name or a `Styles` object (incremental).
-  - `formatter` — `formatDate` and `formatBigNumber` callbacks.
+  - `formatter` — `formatDate`, `formatBigNumber` and `formatExtendText` callbacks.
   - `thousandsSeparator` — `sign` and `format` callback.
   - `decimalFold` — `threshold` and `format` callback for folding trailing zeros.
-  - `zoomAnchor` — `'cursor'` or `'last_bar'`.
+  - `zoomAnchor` — `'cursor'`, `'last_bar'`, or `{ main, xAxis }` to set them separately.
+  - `hotkey` — `enabled` and `exclude` (global hotkey names to skip).
 
 **Returns:** `Chart` instance.
 
@@ -240,9 +226,11 @@ Registers a custom overlay (drawing tool).
   overlay: {
     name: string
     totalStep?: number
+    drawingMode?: 'step' | 'continuous'
     lock?: boolean
     visible?: boolean
     zLevel?: number
+    fixedZLevel?: boolean
     needDefaultPointFigure?: boolean
     needDefaultXAxisFigure?: boolean
     needDefaultYAxisFigure?: boolean
@@ -325,6 +313,12 @@ Registers a custom Y-axis with full control over value transformations and tick 
   }
 ) => void
 ```
+
+---
+
+## `registerHotkey(hotkey)` / `getHotkey(name)` / `getSupportedHotkeys()`
+
+Keyboard shortcuts (new in 10.1). `registerHotkey` takes `{ name, keys, preventDefault?, stopPropagation?, check?, action, extendData? }`; `check` and `action` receive `{ chart, event, key, hotkey }`. `getHotkey` returns the template or `null`; `getSupportedHotkeys` returns the registered names.
 
 ---
 
