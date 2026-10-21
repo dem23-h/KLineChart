@@ -30,6 +30,7 @@ import { getDefaultStyles, type Styles, type TooltipLegend } from './common/Styl
 import { SymbolDefaultPrecisionConstants, type SymbolInfo } from './common/SymbolInfo'
 import TaskScheduler from './common/TaskScheduler'
 import { UpdateLevel } from './common/Updater'
+import { mergeBatchIntoDataList } from './common/utils/barMerge'
 import { formatBigNumber, formatFoldDecimal, formatThousands, formatTimestampByTemplate, formatValue } from './common/utils/format'
 import { createId } from './common/utils/id'
 import { logWarn } from './common/utils/logger'
@@ -102,6 +103,7 @@ export interface Store {
   getPeriod: () => Nullable<Period>
   getDataList: () => KLineData[]
   loadDataListFromCache: (data: KLineData[]) => void
+  batchUpdateData: (bars: KLineData[]) => void
   setOffsetRightDistance: (distance: number) => void
   getOffsetRightDistance: () => number
   setMaxOffsetLeftDistance: (distance: number) => void
@@ -613,6 +615,19 @@ export default class StoreImp implements Store {
       return
     }
     this._dataList = data
+    this._refreshAfterDataChange()
+  }
+
+  /**
+   * Merges several bars into the data list by timestamp (rules in
+   * `mergeBatchIntoDataList`): the engine's `bar_batch` frames carry
+   * deltas, corrections and mid-gap fills. Keeps zoom, scroll, crosshair,
+   * the load-more flags and drawings. No-op when nothing changed.
+   */
+  batchUpdateData(bars: KLineData[]): void {
+    if (bars.length === 0 || !mergeBatchIntoDataList(this._dataList, bars)) {
+      return
+    }
     this._refreshAfterDataChange()
   }
 
