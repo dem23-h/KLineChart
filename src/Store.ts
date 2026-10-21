@@ -718,6 +718,24 @@ export default class StoreImp implements Store {
         this._dataList[dataCount - 1] = data
         success = true
         adjustFlag = true
+      } else {
+        // Out-of-order bar: at a bucket roll the committed bar N can arrive
+        // after the first tick of N+1. Walk back from the tail to replace the
+        // matching bar or splice it in; a bar older than the whole list is
+        // dropped, as before.
+        for (let i = dataCount - 2; i >= 0; i--) {
+          const ts = formatValue(this._dataList[i], 'timestamp', 0) as number
+          if (ts === timestamp) {
+            this._dataList[i] = data
+          } else if (ts < timestamp) {
+            this._dataList.splice(i + 1, 0, data)
+          } else {
+            continue
+          }
+          success = true
+          adjustFlag = true
+          break
+        }
       }
     }
     if (success && adjustFlag) {
