@@ -101,6 +101,7 @@ export interface Store {
   setPeriod: (period: Period) => void
   getPeriod: () => Nullable<Period>
   getDataList: () => KLineData[]
+  loadDataListFromCache: (data: KLineData[]) => void
   setOffsetRightDistance: (distance: number) => void
   getOffsetRightDistance: () => number
   setMaxOffsetLeftDistance: (distance: number) => void
@@ -598,6 +599,41 @@ export default class StoreImp implements Store {
 
   getDataList(): KLineData[] {
     return this._dataList
+  }
+
+  /**
+   * Swaps the data list in place, without `_clearData()` and the async
+   * `init` load, so a silent refetch lands without the blank `setSymbol` /
+   * `resetData` produce. Keeps zoom, scroll, crosshair, the load-more flags
+   * and drawings. Empty input is a no-op, so a flaky upstream returning `[]`
+   * can't wipe the chart.
+   */
+  loadDataListFromCache(data: KLineData[]): void {
+    if (data.length === 0) {
+      return
+    }
+    this._dataList = data
+    this._refreshAfterDataChange()
+  }
+
+  /**
+   * The post-update work `_addData` does after a successful mutation: adjust
+   * the visible range, keep the crosshair, then recalculate indicators (which
+   * lays out) or lay out directly.
+   */
+  private _refreshAfterDataChange(): void {
+    this._adjustVisibleRange()
+    this.setCrosshair(this._crosshair, { notInvalidate: true })
+    const filterIndicators = this.getIndicatorsByFilter({})
+    if (filterIndicators.length > 0) {
+      this._calcIndicator(filterIndicators)
+    } else {
+      this._chart.layout({
+        measureWidth: true,
+        update: true,
+        buildYAxisTick: true
+      })
+    }
   }
 
   getVisibleRangeDataList(): VisibleRangeData[] {

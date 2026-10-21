@@ -794,6 +794,10 @@ export default class ChartImp implements Chart {
     return this._chartStore.getDataList()
   }
 
+  loadDataListFromCache(data: KLineData[]): void {
+    this._chartStore.loadDataListFromCache(data)
+  }
+
   setDataLoader(dataLoader: DataLoader): void {
     this._resetYAxisAutoCalcTickFlag()
     this._chartStore.setDataLoader(dataLoader)
