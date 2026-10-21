@@ -18,6 +18,7 @@ export interface DateTime {
   YYYY: string
   MM: string
   DD: string
+  ddd: string
   HH: string
   mm: string
   ss: string
@@ -79,6 +80,10 @@ export function formatTimestampToDateTime(dateTimeFormat: Intl.DateTimeFormat, t
         date.DD = value
         break
       }
+      case 'weekday': {
+        date.ddd = value
+        break
+      }
       case 'hour': {
         date.HH = value === '24' ? '00' : value
         break
@@ -101,7 +106,7 @@ export function formatTimestampToDateTime(dateTimeFormat: Intl.DateTimeFormat, t
 
 export function formatTimestampByTemplate(dateTimeFormat: Intl.DateTimeFormat, timestamp: number, template: string): string {
   const date = formatTimestampToDateTime(dateTimeFormat, timestamp)
-  return template.replace(/YYYY|MM|DD|HH|mm|ss/g, (key) => date[key])
+  return template.replace(/YYYY|MM|DD|ddd|HH|mm|ss/g, (key) => date[key])
 }
 
 export function formatPrecision(value: string | number, precision?: number): string {

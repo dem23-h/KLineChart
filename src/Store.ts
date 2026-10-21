@@ -514,6 +514,8 @@ export default class StoreImp implements Store {
     if (!isValid(this._dateTimeFormat) || this.getTimezone() !== timezone) {
       const options: Intl.DateTimeFormatOptions = {
         hour12: false,
+        // Feeds the `ddd` token: one formatToParts call yields weekday and Y-M-D, so they can't disagree.
+        weekday: 'short',
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',
