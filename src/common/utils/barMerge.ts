@@ -37,9 +37,9 @@ function lowerBoundByTimestamp(dataList: KLineData[], ts: number): number {
  * Merge `incoming` bars into `dataList` by timestamp. Mutates
  * `dataList` in place and returns `true` iff anything changed.
  *
- * Rules, against the list as it was before the merge:
+ * Rules (`oldest` is the list's first bar before the merge):
  *
- *   1. `ts > rightmost` -> append.
+ *   1. `ts > rightmost` -> append (so a repeated timestamp replaces instead).
  *   2. exact timestamp match -> replace at that index.
  *   3. `oldest < ts`, no match -> splice at its sorted position.
  *   4. `ts <= oldest`, no match -> drop.
@@ -50,13 +50,12 @@ function lowerBoundByTimestamp(dataList: KLineData[], ts: number): number {
  */
 export function mergeBatchIntoDataList(dataList: KLineData[], incoming: KLineData[]): boolean {
   const sorted = [...incoming].sort((a, b) => a.timestamp - b.timestamp)
-  const lastTs = dataList.length > 0 ? timestampAt(dataList, dataList.length - 1) : Number.NEGATIVE_INFINITY
   const oldestTs = dataList.length > 0 ? timestampAt(dataList, 0) : Number.POSITIVE_INFINITY
   let changed = false
 
   for (const bar of sorted) {
     const ts = bar.timestamp
-    if (ts > lastTs) {
+    if (dataList.length === 0 || ts > timestampAt(dataList, dataList.length - 1)) {
       dataList.push(bar)
     } else {
       const idx = lowerBoundByTimestamp(dataList, ts)
