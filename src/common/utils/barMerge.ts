@@ -37,13 +37,12 @@ function lowerBoundByTimestamp(dataList: KLineData[], ts: number): number {
  * Merge `incoming` bars into `dataList` by timestamp. Mutates
  * `dataList` in place and returns `true` iff anything changed.
  *
- * Rules are evaluated against the pre-loop rightmost timestamp:
+ * Rules, against the list as it was before the merge:
  *
  *   1. `ts > rightmost` -> append.
- *   2. `ts === rightmost` snapshot -> replace at the last index.
- *   3. exact timestamp match anywhere -> replace at that index.
- *   4. `oldestTs < ts < rightmost`, no match -> splice at sorted position.
- *   5. `ts <= oldestTs`, no match -> drop.
+ *   2. exact timestamp match -> replace at that index.
+ *   3. `oldest < ts`, no match -> splice at its sorted position.
+ *   4. `ts <= oldest`, no match -> drop.
  *
  * The mid-gap splice handles engine cold-open disk paint followed by a
  * warm-all tail batch after the live bar has already advanced the chart's
@@ -59,25 +58,17 @@ export function mergeBatchIntoDataList(dataList: KLineData[], incoming: KLineDat
     const ts = bar.timestamp
     if (ts > lastTs) {
       dataList.push(bar)
-      changed = true
-      continue
+    } else {
+      const idx = lowerBoundByTimestamp(dataList, ts)
+      if (idx < dataList.length && timestampAt(dataList, idx) === ts) {
+        dataList[idx] = bar
+      } else if (ts > oldestTs) {
+        dataList.splice(idx, 0, bar)
+      } else {
+        continue
+      }
     }
-    if (ts === lastTs) {
-      dataList[dataList.length - 1] = bar
-      changed = true
-      continue
-    }
-
-    const idx = lowerBoundByTimestamp(dataList, ts)
-    if (idx < dataList.length && timestampAt(dataList, idx) === ts) {
-      dataList[idx] = bar
-      changed = true
-      continue
-    }
-    if (oldestTs < ts && ts < lastTs) {
-      dataList.splice(idx, 0, bar)
-      changed = true
-    }
+    changed = true
   }
 
   return changed

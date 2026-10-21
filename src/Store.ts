@@ -634,9 +634,10 @@ export default class StoreImp implements Store {
   }
 
   /**
-   * The post-update work `_addData` does after a successful mutation: adjust
-   * the visible range, keep the crosshair, then recalculate indicators (which
-   * lays out) or lay out directly.
+   * Post-update work after any data mutation (`_addData`,
+   * `loadDataListFromCache`, `batchUpdateData`): adjust the visible range,
+   * keep the crosshair, then recalculate indicators (which lays out) or lay
+   * out directly.
    */
   private _refreshAfterDataChange(): void {
     this._adjustVisibleRange()
@@ -722,37 +723,13 @@ export default class StoreImp implements Store {
         adjustFlag = true
       } else {
         // Out-of-order bar: at a bucket roll the committed bar N can arrive
-        // after the first tick of N+1. Walk back from the tail to replace the
-        // matching bar or splice it in; a bar older than the whole list is
-        // dropped, as before.
-        for (let i = dataCount - 2; i >= 0; i--) {
-          const ts = formatValue(this._dataList[i], 'timestamp', 0) as number
-          if (ts === timestamp) {
-            this._dataList[i] = data
-          } else if (ts < timestamp) {
-            this._dataList.splice(i + 1, 0, data)
-          } else {
-            continue
-          }
-          success = true
-          adjustFlag = true
-          break
-        }
+        // after the first tick of N+1. Replace the matching bar or splice it in.
+        success = mergeBatchIntoDataList(this._dataList, [data])
+        adjustFlag = success
       }
     }
     if (success && adjustFlag) {
-      this._adjustVisibleRange()
-      this.setCrosshair(this._crosshair, { notInvalidate: true })
-      const filterIndicators = this.getIndicatorsByFilter({})
-      if (filterIndicators.length > 0) {
-        this._calcIndicator(filterIndicators)
-      } else {
-        this._chart.layout({
-          measureWidth: true,
-          update: true,
-          buildYAxisTick: true
-        })
-      }
+      this._refreshAfterDataChange()
     }
   }
 
