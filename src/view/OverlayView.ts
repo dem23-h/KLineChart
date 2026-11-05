@@ -206,6 +206,14 @@ export default class OverlayView<C extends Axis = YAxis> extends View<C> {
         if (overlay !== null) {
           if (checkOverlayFigureEvent('onPressedMoving', figure)) {
             if (!overlay.lock) {
+              // A drag cancels the click, so select here or the previous overlay stays selected.
+              // Not on mouse down: that runs before the app's own press handler, which may
+              // clear the selection while this store keeps the id, blocking any re-select.
+              chartStore.setClickOverlayInfo(
+                { paneId, overlay, figureType, figureIndex, figure },
+                (o, f) => this._processOverlaySelectedEvent(o, f, event),
+                (o, f) => this._processOverlayDeselectedEvent(o, f, event)
+              )
               const point = this._coordinateToPoint(overlay, event)
               if (figureType === 'point') {
                 overlay.eventPressedPointMove(point, figureIndex)
